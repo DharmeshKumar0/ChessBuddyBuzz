@@ -1,0 +1,41 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Environment files - the examples are checked in, everything else is local.
+# The negation has no leading slash, so it also un-ignores server/.env.example.
+.env
+.env.*
+!.env.example
+
+# Server (server/ is its own npm project; outDir is server/dist)
+server/node_modules
+server/dist
+
+# TypeScript incremental build info (tsconfigs write to node_modules/.tmp)
+*.tsbuildinfo
+
+# NOTE: public/ is intentionally NOT ignored. public/stockfish/ holds the
+# Stockfish wasm engine and the app cannot run without it. See the README's
+# "Chess engine (Stockfish)" section for why that file is ~113 MB.
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

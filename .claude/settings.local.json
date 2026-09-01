@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(npx oxlint *)",
+      "Bash(sed -n '/export interface GameRoom/,/^}/p' src/chess/types.ts)",
+      "Bash(sed -n '/export interface GameRoom/,/^}/p' server/src/chess/types.ts)",
+      "Bash(echo \"EXIT=$?\")",
+      "Read(//tmp/**)",
+      "Bash(node -e \"const s=require\\('./node_modules/oxlint/configuration_schema.json'\\); console.log\\(Object.keys\\(s.properties\\)\\); console.log\\(JSON.stringify\\(s.properties.ignorePatterns,null,1\\)\\);\")",
+      "Bash(node -e ' *)"
+    ]
+  }
+}
