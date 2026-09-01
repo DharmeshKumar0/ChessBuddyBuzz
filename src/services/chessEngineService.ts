@@ -12,6 +12,8 @@
 const DEFAULT_ENGINE_URL =
   '/stockfish/stockfish-18-single.js#/stockfish/stockfish-18-single.wasm';
 
+const ENGINE_URL = import.meta.env.VITE_STOCKFISH_URL || DEFAULT_ENGINE_URL;
+
 /** The UCI handshake includes downloading a large wasm binary on first load. */
 const HANDSHAKE_TIMEOUT_MS = 180_000;
 /** Head-room added on top of a search's own movetime before we give up. */
@@ -297,7 +299,7 @@ class ChessEngineService {
   private sideToMove: 'white' | 'black' = 'white';
 
   constructor(options: EngineOptions = {}) {
-    this.engineUrl = options.engineUrl || DEFAULT_ENGINE_URL;
+    this.engineUrl = options.engineUrl || ENGINE_URL;
   }
 
   /** Boot the worker and complete the UCI handshake. Idempotent. */

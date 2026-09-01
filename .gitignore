@@ -39,3 +39,4 @@ server/dist
 *.njsproj
 *.sln
 *.sw?
+stockfish/
