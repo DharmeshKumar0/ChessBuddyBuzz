@@ -1,5 +1,4 @@
-import express from 'express';
-import type { Request } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer } from 'http';
 import { Server, type Socket } from 'socket.io';
 import cors from 'cors';
@@ -168,7 +167,7 @@ if (config.trustProxy) app.set('trust proxy', config.trustProxyHops);
 
 app.use(cors({ origin: config.corsOrigins, credentials: true }));
 
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   const verdict = limiters.http.consume(httpIp(req));
   if (!verdict.allowed) {
     res
@@ -183,7 +182,7 @@ app.use((req, res, next) => {
 // No route reads a body today; the cap is here so that stays true by default.
 app.use(express.json({ limit: config.capacity.maxJsonBytes }));
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
@@ -192,7 +191,7 @@ app.get('/health', (_req, res) => {
  * size of every limiter's bucket map so a leak there would be visible. No
  * player names, addresses or game content.
  */
-app.get('/stats', (_req, res) => {
+app.get('/stats', (_req: Request, res: Response) => {
   res.json({
     uptimeSeconds: Math.floor(process.uptime()),
     sockets: { total: connections.total, addresses: connections.keys },
