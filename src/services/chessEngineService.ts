@@ -14,6 +14,73 @@ const DEFAULT_ENGINE_URL =
 
 const ENGINE_URL = import.meta.env.VITE_STOCKFISH_URL || DEFAULT_ENGINE_URL;
 
+/** An `engineUrl` is `<js-url>#<wasm-url>`; stockfish.js reads the wasm path from the hash. */
+function splitEngineUrl(engineUrl: string): { jsUrl: string; wasmUrl: string } {
+  const hashIndex = engineUrl.indexOf('#');
+  if (hashIndex === -1) {
+    return { jsUrl: engineUrl, wasmUrl: '' };
+  }
+  return { jsUrl: engineUrl.slice(0, hashIndex), wasmUrl: engineUrl.slice(hashIndex + 1) };
+}
+
+function isHttpUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+/**
+ * Resolve the URL to hand to `new Worker`.
+ *
+ * - Same-origin scripts (e.g. the dev-time `/stockfish/...`) load directly; the
+ *   wasm path stays in the worker URL hash exactly as Stockfish expects.
+ * - A cross-origin script is rejected by `new Worker`, so we return a same-origin
+ *   `blob:` bootstrap that loads the external classic script with `importScripts()`
+ *   and hands the uploaded wasm binary to Stockfish's loader. `blobUrl` is the
+ *   object URL to revoke on teardown; it is `null` for the direct path.
+ */
+function buildWorkerUrl(engineUrl: string): { url: string; blobUrl: string | null } {
+  const { jsUrl, wasmUrl } = splitEngineUrl(engineUrl);
+  if (!isHttpUrl(jsUrl) || !wasmUrl) {
+    return { url: engineUrl, blobUrl: null };
+  }
+
+  const bootstrap = [
+    '(function () {',
+    `  var ENGINE_JS = ${JSON.stringify(jsUrl)};`,
+    `  var ENGINE_WASM = ${JSON.stringify(wasmUrl)};`,
+    '  var realFetch = self.fetch.bind(self);',
+    '',
+    '  function fatal(message) {',
+    '    try { self.postMessage("__stockfish_fatal: " + message); } catch (e) {}',
+    '  }',
+    '',
+    '  // Stockfish single-build resolves its wasm from the worker URL hash, which a',
+    '  // blob:// worker cannot carry, so it fetches a broken blob-derived path. Serve',
+    '  // the externally-hosted binary for that request instead.',
+    '  var wasmResponse = realFetch(ENGINE_WASM).then(function (r) {',
+    '    if (!r.ok) throw new Error("stockfish wasm fetch failed: HTTP " + r.status);',
+    '    return r;',
+    '  }).catch(function (err) {',
+    '    fatal((err && err.message) ? err.message : String(err));',
+    '    throw err;',
+    '  });',
+    '',
+    '  // The engine makes exactly one network fetch in the worker: the wasm binary.',
+    '  self.fetch = function () { return wasmResponse; };',
+    '',
+    '  try {',
+    '    importScripts(ENGINE_JS);',
+    '  } catch (err) {',
+    '    fatal((err && err.message) ? err.message : String(err));',
+    '    throw err;',
+    '  }',
+    '})();',
+  ].join('\n');
+
+  const blob = new Blob([bootstrap], { type: 'text/javascript' });
+  const blobUrl = URL.createObjectURL(blob);
+  return { url: blobUrl, blobUrl };
+}
+
 /** The UCI handshake includes downloading a large wasm binary on first load. */
 const HANDSHAKE_TIMEOUT_MS = 180_000;
 /** Head-room added on top of a search's own movetime before we give up. */
@@ -280,6 +347,8 @@ class ChessEngineService {
   private isInitialized = false;
   private initializationPromise: Promise<void> | null = null;
   private engineUrl: string;
+  /** `blob:` object URL created for a cross-origin bootstrap; revoked on teardown. */
+  private engineBlobUrl: string | null = null;
 
   private onInfoCallback: EngineCallback | null = null;
   private onEvaluationCallback: ((evaluation: EvaluationData) => void) | null = null;
@@ -299,7 +368,10 @@ class ChessEngineService {
   private sideToMove: 'white' | 'black' = 'white';
 
   constructor(options: EngineOptions = {}) {
-    this.engineUrl = options.engineUrl || ENGINE_URL;
+    const engineUrl = options.engineUrl || ENGINE_URL;
+    const resolved = buildWorkerUrl(engineUrl);
+    this.engineUrl = resolved.url;
+    this.engineBlobUrl = resolved.blobUrl;
   }
 
   /** Boot the worker and complete the UCI handshake. Idempotent. */
@@ -313,6 +385,7 @@ class ChessEngineService {
         worker = new Worker(this.engineUrl);
       } catch (error) {
         this.initializationPromise = null;
+        this.revokeBlobUrl();
         reject(error instanceof Error ? error : new Error(String(error)));
         return;
       }
@@ -338,6 +411,7 @@ class ChessEngineService {
         worker.onerror = null;
         worker.terminate();
         if (this.worker === worker) this.worker = null;
+        this.revokeBlobUrl();
 
         // A no-op once the boot promise has already settled.
         reject(error);
@@ -418,6 +492,10 @@ class ChessEngineService {
 
     const msg = line.trim();
     if (!msg) return;
+
+    // A cross-origin blob bootstrap reports a load failure here so the UCI
+    // handshake fails fast instead of waiting out its timeout.
+    if (this.handleFatalLine(msg)) return;
 
     if (msg === 'uciok') {
       const handshake = this.uciHandshake;
@@ -742,6 +820,27 @@ class ChessEngineService {
     }
   }
 
+  /** Release the blob object URL created for a cross-origin bootstrap, if any. */
+  private revokeBlobUrl(): void {
+    if (this.engineBlobUrl) {
+      URL.revokeObjectURL(this.engineBlobUrl);
+      this.engineBlobUrl = null;
+    }
+  }
+
+  /** Handle a fatal error line raised by a cross-origin blob bootstrap. */
+  private handleFatalLine(message: string): boolean {
+    if (!message.startsWith('__stockfish_fatal:')) return false;
+    const error = new Error(message.slice('__stockfish_fatal:'.length).trim());
+    this.failAllPending(error);
+    if (this.worker) {
+      this.worker.onerror?.(
+        new ErrorEvent('error', { message: error.message, error }),
+      );
+    }
+    return true;
+  }
+
   terminate(): void {
     this.failAllPending(new Error('Engine terminated'));
     if (this.worker) {
@@ -750,6 +849,7 @@ class ChessEngineService {
       this.worker.terminate();
       this.worker = null;
     }
+    this.revokeBlobUrl();
     this.isInitialized = false;
     this.initializationPromise = null;
     this.currentEvaluation = null;
